@@ -26,7 +26,3 @@ depends 'ark', '~> 0.9'
 depends 'apt', '~> 2.6.0'
 depends 'java', '~> 1.29'
 
-# Optional dependencies
-# FIX: 'depends' because of https://github.com/acrmp/foodcritic/issues/159
-depends 'elasticsearch', '~> 0.3.10'
-suggests 'logstash', '~> 0.9.2'

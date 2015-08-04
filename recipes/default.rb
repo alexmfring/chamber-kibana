@@ -1,126 +1,90 @@
 #
-# Cookbook Name:: chamber-kibana
+# Cookbook Name:: kibana
 # Recipe:: default
 #
-include_recipe 'chamber-kibana::_preconditions'
-include_recipe 'chamber-kibana::dependencies'
-include_recipe 'ark'
-
-# Create user and group
+# Copyright 2013, John E. Vincent
 #
-group 'kibana group' do
-  gid node['kibana']['gid']
-  group_name node['kibana']['user']
-  action :create
-  system true
-end
-
-user 'kibana user' do
-  username node['kibana']['user']
-  comment 'Kibana User'
-  home "#{node['kibana']['dir']}/kibana"
-  shell '/bin/bash'
-  uid node['kibana']['uid']
-  gid node['kibana']['user']
-  supports manage_home: false
-  action :create
-  system true
-end
-
-# Create ES directories
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-[node['kibana']['path']['conf'], node['kibana']['path']['logs']].each do |path|
-  directory path do
-    owner node['kibana']['user']
-    group node['kibana']['user']
-    mode 0755
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+if node['kibana']['legacy_mode']
+  # Temporarily here to allow to use the old way.
+  include_recipe 'git'
+
+  unless Chef::Config[:solo]
+    es_server_results = search(:node, "roles:#{node['kibana']['es_role']} AND chef_environment:#{node.chef_environment}")
+    unless es_server_results.empty?
+      node.set['kibana']['es_server'] = es_server_results[0]['ipaddress']
+    end
+  end
+
+  if node['kibana']['user'].empty?
+    if !node['kibana']['webserver'].empty?
+      webserver = node['kibana']['webserver']
+      kibana_user = node[webserver]['user']
+    else
+      kibana_user = 'nobody'
+    end
+  else
+    kibana_user = node['kibana']['user']
+  end
+
+  directory node['kibana']['install_dir'] do
     recursive true
-    action :create
+    owner kibana_user
+    mode '0755'
   end
-end
 
-directory 'create directory for kibana pid file' do
-  path node['kibana']['pid_path']
-  mode 00755
-  recursive true
-end
-
-# Create service
-#
-template '/etc/init.d/kibana' do
-  source 'kibana.init.erb'
-  owner 'root'
-  mode 0755
-end
-
-service 'kibana' do
-  supports status: true, restart: true
-  action [:enable]
-end
-
-# Download, extract, symlink the kibana libraries and binaries
-#
-ark_prefix_root = node['kibana']['dir'] || node['ark']['prefix_root']
-ark_prefix_home = node['kibana']['dir'] || node['ark']['prefix_home']
-
-filename = node['kibana']['filename'] || "kibana-#{node['kibana']['version']}.tar.gz"
-download_url = node['kibana']['download_url'] || [node['kibana']['host'], node['kibana']['repository'], filename].join('/')
-
-ark 'kibana' do
-  url download_url
-  owner node['kibana']['user']
-  group node['kibana']['user']
-  version node['kibana']['version']
-  has_binaries ['bin/kibana']
-  checksum node['kibana']['checksum']
-  prefix_root ark_prefix_root
-  prefix_home ark_prefix_home
-
-  notifies :start,   'service[kibana]' unless node['kibana']['skip_start']
-  notifies :restart, 'service[kibana]' unless node['kibana']['skip_restart']
-
-  not_if do
-    link   = "#{node['kibana']['dir']}/kibana"
-    target = "#{node['kibana']['dir']}/kibana-#{node['kibana']['version']}"
-    binary = "#{target}/bin/kibana"
-
-    ::File.directory?(link) && ::File.symlink?(link) && ::File.readlink(link) == target && ::File.exist?(binary)
+  case node['kibana']['install_type']
+  when 'git'
+    git "#{node['kibana']['install_dir']}/#{node['kibana']['git']['branch']}" do
+      repository node['kibana']['git']['url']
+      reference node['kibana']['git']['branch']
+      action node['kibana']['git']['type'].to_sym
+      user kibana_user
+    end
+    link "#{node['kibana']['install_dir']}/current" do
+      to "#{node['kibana']['install_dir']}/#{node['kibana']['git']['branch']}"
+    end
+    node.set['kibana']['web_dir'] = "#{node['kibana']['install_dir']}/current/src"
+  when 'file'
+    case node['kibana']['file']['type']
+    when 'zip', 'tgz'
+      include_recipe 'ark::default'
+      ark 'kibana' do
+        url node['kibana']['file']['url']
+        path node['kibana']['install_path']
+        checksum  node['kibana']['file']['checksum']
+        owner kibana_user
+        action :put
+      end
+      node.set['kibana']['web_dir'] = node['kibana']['install_dir']
+    end
   end
-end
 
-# Create ES config file
-#
-template 'kibana.yml' do
-  path "#{node['kibana']['path']['conf']}/kibana.yml"
-  source node['kibana']['templates']['kibana_yml']
-  owner node['kibana']['user']
-  group node['kibana']['user']
-  mode 0755
+  template "#{node['kibana']['web_dir']}/config.js" do
+    source node['kibana']['config_template']
+    cookbook node['kibana']['config_cookbook']
+    mode '0750'
+    user kibana_user
+  end
 
-  notifies :restart, 'service[kibana]' unless node['kibana']['skip_restart']
-end
+  link "#{node['kibana']['web_dir']}/app/dashboards/default.json" do
+    to 'logstash.json'
+    only_if { !File.symlink?("#{node['kibana']['web_dir']}/app/dashboards/default.json") }
+  end
 
-# Note:
-#   The following code is a temporary solution.
-#   It may be changed/removed completely after Kibana 4 release (final, or at least RC).
-#
-
-# Fix: Workaround for hardcoded 512m memory requirement.
-# This will probably be configured in future beta versions of Kibana 4.
-#
-replace_or_add 'Change hardcoded JAVA_OPTS in Kibana binary' do
-  path "#{node['kibana']['bindir']}/kibana"
-  pattern '^JAVA_OPTS=.*'
-  line "JAVA_OPTS=\"#{node['kibana']['java_opts']}\""
-end
-
-kibana_config_original = "#{node['kibana']['dir']}/kibana/config/kibana.yml"
-file "Remove original kibana config - #{kibana_config_original}" do
-  path kibana_config_original
-  action :delete
-end
-
-link 'Link kibana configuration file' do
-  target_file kibana_config_original
-  to "#{node['kibana']['path']['conf']}/kibana.yml"
+  unless node['kibana']['webserver'].empty?
+    include_recipe "kibana::#{node['kibana']['webserver']}"
+  end
 end

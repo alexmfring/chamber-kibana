@@ -1,65 +1,72 @@
-# === VERSION AND LOCATION
-#
-default['kibana']['version']       = '4.0.0-beta3'
-# sha256 ( shasum -a 256 FILENAME )
-default['kibana']['checksum']      = 'd593af567c5dd814e59fb2bc2e11a194add6caa0f58c54c82da8fb708554aded'
-default['kibana']['host']          = 'http://download.elasticsearch.org'
-default['kibana']['repository']    = 'kibana/kibana'
-default['kibana']['filename']      = nil
-default['kibana']['download_url']  = nil
+# The method used to install kibana.  `git` will clone the git repo,
+# `file` will download from elasticsearch.org
+# git is not really supported since the move to java based server.
+default['kibana']['install_type'] = 'file' # git | file
+default['kibana']['version'] = '4.0.0-linux-x64' # must match version number of kibana being installed
 
-# === DEPENDENCIES
-#
-default['kibana']['dependency']['install_java']          = true
-default['kibana']['dependency']['install_elasticsearch'] = true
+# Values to use for git method of installation
+default['kibana']['git']['url'] = 'https://github.com/elasticsearch/kibana'
+default['kibana']['git']['branch'] = 'v3.1.2'
+default['kibana']['git']['type'] = 'sync' # checkout | sync
+default['kibana']['git']['config'] = 'kibana/config.js' # relative path of config file
+default['kibana']['git']['config_template'] = 'config.js.erb' # template to use for config
+default['kibana']['git']['config_template_cookbook'] = 'kibana_lwrp' # cookbook containing config template
 
-# === NAMING
-#
-default['kibana']['node']['name']    = node.name
+# Values to use for file method of installation
+default['kibana']['file']['type'] = 'tgz' # zip | tgz
 
-# === USER & PATHS
-#
-default['kibana']['dir']       = '/usr/local'
-default['kibana']['bindir']    = '/usr/local/bin'
-default['kibana']['user']      = 'kibana'
-default['kibana']['uid']       = nil
-default['kibana']['gid']       = nil
+default['kibana']['file']['url'] = 'https://download.elasticsearch.org/kibana/kibana/kibana-4.0.0-linux-x64.tar.gz'
+default['kibana']['file']['checksum'] = nil # sha256 ( shasum -a 256 FILENAME )
+default['kibana']['file']['config'] = 'config/kibana.yml' # relative path of config file
+default['kibana']['file']['config_template'] = 'kibana.yml.erb' # template to use for config
+default['kibana']['file']['config_template_cookbook'] = 'kibana_lwrp' # cookbook containing config template
 
-default['kibana']['path']['conf'] = '/usr/local/etc/kibana'
-default['kibana']['path']['logs'] = '/usr/local/var/log/kibana'
+# Kibana Java Web Server
+default['kibana']['java_webserver_port'] = 5601
 
-default['kibana']['pid_path']  = '/usr/local/var/run'
-default['kibana']['pid_file']  = "#{node['kibana']['pid_path']}/kibana-#{node['kibana']['node']['name'].to_s.gsub(/\W/, '_')}.pid"
+# this is only used by the recipe.  if you use the LWRPs
+# (which you should) then install java from your own recipe.
+default['kibana']['install_java'] = true
 
-default['kibana']['templates']['kibana_yml'] = 'kibana.yml.erb'
+# Which webserver to use, and webserver options.
+default['kibana']['webserver'] = 'nginx' # nginx or apache
+default['kibana']['webserver_hostname'] = node.name
+default['kibana']['webserver_aliases'] = [node['ipaddress']]
+default['kibana']['webserver_listen'] = node['ipaddress']
+default['kibana']['webserver_port'] = 80
+default['kibana']['webserver_scheme'] = 'http://'
 
-# === Service
-#
-default['kibana']['skip_start']   = false
-default['kibana']['skip_restart'] = false
+# parent directory of install_dir.  This is required because of the `file` method.
+default['kibana']['install_path'] = '/opt'
 
-# === Kibana instance configurations
-#
-default['kibana']['java_opts'] = '-Xms128m -Xmx128m $JAVA_OPTS'
-# Kibana Host
-default['kibana']['http']['host'] = '0.0.0.0'
-# Kibana Port
-default['kibana']['http']['port'] = 5601
-# The Elasticsearch instance to use
-default['kibana']['elasticsearch']['server'] = 'http://127.0.0.1:9200'
-# Kibana uses an index in Elasticsearch to store saved searches, visualizations
-# and dashboards. It will create an new index if it doesn't already exist.
-default['kibana']['elasticsearch']['index'] = '.kibana'
-# The default application to load.
-default['kibana']['default_app_id'] = 'discover'
-# Time in seconds to wait for responses from the back end or elasticsearch.
-# Note this should always be higher than "shard_timeout".
-# This must be > 0
-default['kibana']['request_timeout'] = '60'
-# Time in milliseconds for Elasticsearch to wait for responses from shards.
-# Note this should always be lower than "request_timeout".
-# Set to 0 to disable (not recommended).
-default['kibana']['shard_timeout'] = '30000'
-# Set to false to have a complete disregard for the validity of the SSL
-# certificate.
-default['kibana']['verify_ssl'] = true
+# the actual installation directory of kibana. If using the `file` method this should be left as is.
+default['kibana']['install_dir'] = "#{node['kibana']['install_path']}/kibana"
+
+# used to configure proxy information for the webserver to proxy ES calls.
+default['kibana']['es_server'] = '127.0.0.1'
+default['kibana']['es_port'] = '9200'
+default['kibana']['es_role'] = 'elasticsearch_server'
+default['kibana']['es_scheme'] = 'http://'
+
+# user to install kibana files as.  if left blank will use the default webserver user.
+default['kibana']['user'] = 'kibana'
+
+# config template location and variables.
+default['kibana']['config']['kibana_index']  = 'kibana-int'
+default['kibana']['config']['panel_names']   =  %w(histogram map pie table filtering timepicker text fields hits dashcontrol column derivequeries trends bettermap query terms)
+default['kibana']['config']['default_route'] = '/dashboard/file/logstash.json'
+# include quote inside this next variable if not using window.location style variables...
+# e.g.  = "'http://elasticsearch.example.com:9200'"
+default['kibana']['config']['elasticsearch'] = "window.location.protocol+\"//\"+window.location.hostname+\":\"+window.location.port"
+
+# nginx variables
+default['kibana']['nginx']['install_method'] = 'package'
+default['kibana']['nginx']['template'] = 'kibana-nginx.conf.erb'
+default['kibana']['nginx']['template_cookbook'] = 'kibana_lwrp'
+default['kibana']['nginx']['enable_default_site'] = false
+default['kibana']['nginx']['install_method'] = 'package'
+
+# Apache variables.
+default['kibana']['apache']['template'] = 'kibana-apache.conf.erb'
+default['kibana']['apache']['template_cookbook'] = 'kibana_lwrp'
+default['kibana']['apache']['enable_default_site'] = false
